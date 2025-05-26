@@ -54,7 +54,7 @@ class AuthenticationUseCase:
     async def start_authorization_code_flow(
         self,
         account_id: UUID,
-        scope: str = "https://graph.microsoft.com/.default",
+        scope: str = "https://graph.microsoft.com/.default offline_access",
     ) -> Tuple[str, str]:
         """
         Authorization Code Flow 인증을 시작합니다.
@@ -110,7 +110,7 @@ class AuthenticationUseCase:
         self,
         code: str,
         state: str,
-        scope: str = "https://graph.microsoft.com/.default",
+        scope: str = "https://graph.microsoft.com/.default offline_access",
     ) -> Token:
         """
         Authorization Code Flow 인증을 완료합니다.
@@ -168,7 +168,7 @@ class AuthenticationUseCase:
     async def start_device_code_flow(
         self,
         account_id: UUID,
-        scope: str = "https://graph.microsoft.com/.default",
+        scope: str = "https://graph.microsoft.com/.default offline_access",
     ) -> Dict[str, str]:
         """
         Device Code Flow 인증을 시작합니다.
@@ -219,7 +219,7 @@ class AuthenticationUseCase:
     async def poll_device_code_flow(
         self,
         device_code: str,
-        scope: str = "https://graph.microsoft.com/.default",
+        scope: str = "https://graph.microsoft.com/.default offline_access",
         max_attempts: int = 60,
         interval: int = 5,
     ) -> Token:

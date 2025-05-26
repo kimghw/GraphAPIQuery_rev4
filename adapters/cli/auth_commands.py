@@ -30,7 +30,7 @@ auth_app = typer.Typer(help="인증 관련 명령어")
 def start_authorization_code_flow(
     email: str = typer.Option(..., "--email", "-e", help="계정 이메일"),
     scope: str = typer.Option(
-        "https://graph.microsoft.com/.default",
+        "https://graph.microsoft.com/.default offline_access",
         "--scope", "-s",
         help="요청할 권한 범위"
     ),
@@ -44,7 +44,7 @@ def complete_authorization_code_flow(
     code: str = typer.Option(..., "--code", "-c", help="인증 코드"),
     state: str = typer.Option(..., "--state", "-s", help="State 값"),
     scope: str = typer.Option(
-        "https://graph.microsoft.com/.default",
+        "https://graph.microsoft.com/.default offline_access",
         "--scope",
         help="권한 범위"
     ),
@@ -57,7 +57,7 @@ def complete_authorization_code_flow(
 def start_device_code_flow(
     email: str = typer.Option(..., "--email", "-e", help="계정 이메일"),
     scope: str = typer.Option(
-        "https://graph.microsoft.com/.default",
+        "https://graph.microsoft.com/.default offline_access",
         "--scope", "-s",
         help="요청할 권한 범위"
     ),
@@ -70,7 +70,7 @@ def start_device_code_flow(
 def poll_device_code_flow(
     device_code: str = typer.Option(..., "--device-code", "-d", help="디바이스 코드"),
     scope: str = typer.Option(
-        "https://graph.microsoft.com/.default",
+        "https://graph.microsoft.com/.default offline_access",
         "--scope",
         help="권한 범위"
     ),

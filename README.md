@@ -120,21 +120,31 @@ accounts = await account_usecase.list_active_accounts()
 
 #### 2. AuthenticationUseCase
 ```python
-# Authorization Code Flow 시작
+# Authorization Code Flow 시작 (offline_access 포함)
 auth_url, state = await auth_usecase.start_authorization_code_flow(
     account_id=account.id,
-    scope="https://graph.microsoft.com/.default"
+    scope="https://graph.microsoft.com/.default offline_access"
 )
 
 # 인증 완료
 token = await auth_usecase.complete_authorization_code_flow(
     code="auth_code",
-    state=state
+    state=state,
+    scope="https://graph.microsoft.com/.default offline_access"
 )
 
-# Device Code Flow
-device_info = await auth_usecase.start_device_code_flow(account_id)
-token = await auth_usecase.poll_device_code_flow(device_info['device_code'])
+# Device Code Flow (offline_access 포함)
+device_info = await auth_usecase.start_device_code_flow(
+    account_id,
+    scope="https://graph.microsoft.com/.default offline_access"
+)
+token = await auth_usecase.poll_device_code_flow(
+    device_info['device_code'],
+    scope="https://graph.microsoft.com/.default offline_access"
+)
+
+# 토큰 갱신 (refresh 토큰 사용)
+refreshed_token = await auth_usecase.refresh_token(account_id)
 ```
 
 #### 3. MailProcessingUseCase
@@ -203,17 +213,107 @@ WEBHOOK_SECRET=your_webhook_secret
 LOG_LEVEL=INFO
 ```
 
+## 🔑 Refresh 토큰 발급 가이드
+
+### ⚠️ 중요: offline_access 권한 필수
+
+Microsoft Graph API에서 refresh 토큰을 발급받으려면 **반드시 `offline_access` 권한을 포함**해야 합니다.
+
+#### ✅ 올바른 권한 설정
+```python
+# 올바른 예시 - offline_access 포함
+scope = "https://graph.microsoft.com/.default offline_access"
+
+# Authorization Code Flow
+auth_url, state = await auth_usecase.start_authorization_code_flow(
+    account_id=account.id,
+    scope="https://graph.microsoft.com/.default offline_access"
+)
+
+# Device Code Flow
+device_info = await auth_usecase.start_device_code_flow(
+    account_id=account.id,
+    scope="https://graph.microsoft.com/.default offline_access"
+)
+```
+
+#### ❌ 잘못된 권한 설정
+```python
+# 잘못된 예시 - offline_access 누락
+scope = "https://graph.microsoft.com/.default"  # refresh 토큰 발급 안됨!
+```
+
+### 🔍 Refresh 토큰 확인 방법
+
+#### CLI 명령어로 토큰 상태 확인
+```bash
+# 토큰 상태 상세 조회
+python main.py auth token-status --email your@email.com
+
+# 토큰 원본 값 로그 출력
+python main.py auth log-raw-token --email your@email.com
+
+# 토큰 무결성 검증
+python main.py auth validate-token --email your@email.com
+```
+
+#### 데이터베이스에서 직접 확인
+```bash
+# SQLite에서 refresh 토큰 존재 여부 확인
+sqlite3 dev_database.db "SELECT account_id, refresh_token IS NOT NULL as has_refresh_token FROM tokens;"
+```
+
+### 🔄 토큰 갱신 사용법
+
+```python
+# 토큰 갱신 (refresh 토큰 사용)
+refreshed_token = await auth_usecase.refresh_token(account_id)
+
+if refreshed_token:
+    print("토큰 갱신 성공!")
+else:
+    print("토큰 갱신 실패 - 새로 인증 필요")
+```
+
+```bash
+# CLI로 토큰 갱신
+python main.py auth refresh-token --email your@email.com
+```
+
+### 📋 체크리스트
+
+인증 시 다음 사항을 확인하세요:
+
+- [ ] **권한 범위에 `offline_access` 포함**
+- [ ] **웹서버가 실행 중** (Authorization Code Flow 사용 시)
+- [ ] **콜백 URL이 올바르게 설정됨**
+- [ ] **인증 완료 후 refresh 토큰이 저장되었는지 확인**
+
+### 🚨 문제 해결
+
+#### Refresh 토큰이 NULL인 경우
+1. **원인**: `offline_access` 권한 누락
+2. **해결**: 권한에 `offline_access` 추가 후 재인증
+3. **확인**: `python main.py auth token-status --email your@email.com`
+
+#### 토큰 갱신 실패 시
+1. **Refresh 토큰 만료**: 새로 인증 필요
+2. **권한 변경**: 사용자가 권한을 철회한 경우
+3. **네트워크 오류**: 일시적 오류, 재시도 필요
+
 ## 보안 설계
 
 ### 토큰 보안
 - **AES-256 암호화**: 모든 토큰은 암호화되어 데이터베이스에 저장
 - **자동 갱신**: 만료 임박 토큰 자동 갱신 메커니즘
 - **안전한 폐기**: 토큰 폐기 시 완전 삭제
+- **Refresh 토큰 보호**: Refresh 토큰도 암호화되어 안전하게 저장
 
 ### 인증 보안
 - **State 검증**: CSRF 공격 방지를 위한 State 파라미터 검증
 - **HTTPS 필수**: 모든 OAuth 통신은 HTTPS로 진행
 - **권한 범위 관리**: 최소 권한 원칙 적용
+- **offline_access 권한**: Refresh 토큰 발급을 위한 필수 권한
 
 ## 개발 진행 상황
 

@@ -90,7 +90,7 @@ async def start_auth(
             logger.info(f"Authorization Code Flow 시작: {account.id}")
             auth_url, state = await auth_usecase.start_authorization_code_flow(
                 account.id,
-                scope="https://graph.microsoft.com/.default"
+                scope="https://graph.microsoft.com/.default offline_access"
             )
             
             logger.info(f"인증 URL 생성 완료: state={state}")
@@ -103,7 +103,7 @@ async def start_auth(
             logger.info(f"Device Code Flow 시작: {account.id}")
             device_info = await auth_usecase.start_device_code_flow(
                 account.id,
-                scope="https://graph.microsoft.com/.default"
+                scope="https://graph.microsoft.com/.default offline_access"
             )
             
             logger.info(f"Device Code 생성 완료: user_code={device_info['user_code']}")
@@ -230,7 +230,7 @@ async def auth_callback(
         token = await auth_usecase.complete_authorization_code_flow(
             code=code,
             state=state,
-            scope="https://graph.microsoft.com/.default"
+            scope="https://graph.microsoft.com/.default offline_access"
         )
         
         logger.info(f"토큰 발급 완료: account_id={token.account_id}")
@@ -336,7 +336,7 @@ async def poll_device_code(
         try:
             token = await auth_usecase.poll_device_code_flow(
                 device_code=device_code,
-                scope="https://graph.microsoft.com/.default",
+                scope="https://graph.microsoft.com/.default offline_access",
                 max_attempts=1,  # 한 번만 시도
                 interval=0
             )
