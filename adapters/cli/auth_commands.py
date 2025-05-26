@@ -18,6 +18,7 @@ from rich.prompt import Confirm
 from core.domain.entities import AuthType
 from adapters.db.database import initialize_database
 from adapters.db.repositories import AccountRepositoryAdapter, AuthConfigRepositoryAdapter
+from adapters.factory import get_adapter_factory
 from adapters.logger import create_logger
 from config.adapters import get_config
 
@@ -127,6 +128,7 @@ async def _start_authorization_code_flow(email: str, scope: str):
         factory = get_adapter_factory()
         
         db_adapter = factory.get_database_adapter()
+        await db_adapter.initialize()
         
         async with db_adapter.get_session() as session:
             # 계정 조회

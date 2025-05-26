@@ -27,6 +27,7 @@ from .db.repositories import (
     AuthConfigRepositoryAdapter,
     TokenRepositoryAdapter,
 )
+from .db.database import DatabaseAdapter, initialize_database
 from .external.graph_api_client import GraphApiClientAdapter
 from .external.encryption_service import EncryptionServiceAdapter
 from .external.cache_service import CacheServiceAdapter, InMemoryCacheServiceAdapter
@@ -50,7 +51,6 @@ class AdapterFactory:
             self._logger = LoggerAdapter(
                 name="GraphAPIQuery",
                 level=self.config.get_log_level(),
-                format_string=self.config.get_log_format(),
             )
         return self._logger
     
@@ -133,6 +133,10 @@ class AdapterFactory:
             cache_service=cache_service,
             logger=logger,
         )
+    
+    def get_database_adapter(self) -> DatabaseAdapter:
+        """데이터베이스 어댑터를 반환합니다."""
+        return initialize_database(self.config)
     
     def get_config(self) -> ConfigPort:
         """설정 객체를 반환합니다."""
