@@ -122,6 +122,7 @@ class GraphApiClientAdapter(GraphApiClientPort):
         client_id: str,
         tenant_id: str,
         device_code: str,
+        client_secret: Optional[str] = None,
     ) -> dict:
         """디바이스 코드를 폴링합니다."""
         self.logger.debug(f"디바이스 코드 폴링: client_id={client_id}, tenant_id={tenant_id}")
@@ -133,6 +134,14 @@ class GraphApiClientAdapter(GraphApiClientPort):
             "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
             "device_code": device_code,
         }
+        
+        # client_secret이 제공된 경우 포함
+        if client_secret:
+            data["client_secret"] = client_secret
+        
+        # 디버깅: 요청 데이터 로그 출력
+        self.logger.info(f"[DEBUG] Device Code 폴링 요청 데이터: {data}")
+        self.logger.info(f"[DEBUG] client_secret 포함 여부: {bool(client_secret)}")
         
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(

@@ -265,6 +265,7 @@ class AuthenticationUseCase:
                     client_id=auth_config.client_id,
                     tenant_id=auth_config.tenant_id,
                     device_code=device_code,
+                    client_secret=getattr(auth_config, 'client_secret', None),
                 )
                 
                 # 성공 시 토큰 저장

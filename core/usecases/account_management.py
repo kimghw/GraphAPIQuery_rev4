@@ -17,6 +17,7 @@ from ..domain.entities import (
 from ..domain.ports import (
     AccountRepositoryPort,
     AuthConfigRepositoryPort,
+    TokenRepositoryPort,
     LoggerPort,
 )
 
@@ -185,6 +186,9 @@ class AccountManagementUseCase:
             self.logger.warning(f"존재하지 않는 계정 업데이트 시도: {account_id}")
             return None
         
+        # 인증 타입 변경 여부 확인
+        auth_type_changed = auth_type is not None and auth_type != account.auth_type
+        
         # 업데이트할 필드가 있는 경우에만 수정
         updated = False
         if display_name is not None and display_name != account.display_name:
@@ -195,8 +199,16 @@ class AccountManagementUseCase:
             account.tenant_id = tenant_id
             updated = True
         
-        if auth_type is not None and auth_type != account.auth_type:
+        if auth_type_changed:
+            self.logger.info(f"인증 타입 변경: {account.auth_type} -> {auth_type}")
+            
+            # 인증 타입 변경 시 추가 작업 수행
+            await self._handle_auth_type_change(account_id, account.auth_type, auth_type)
+            
+            # 계정 상태를 INACTIVE로 변경 (새로 인증 필요)
+            account.status = AccountStatus.INACTIVE
             account.auth_type = auth_type
+            account.last_sync_at = None  # 마지막 동기화 시간 초기화
             updated = True
         
         if updated:
@@ -206,6 +218,38 @@ class AccountManagementUseCase:
             self.logger.debug(f"업데이트할 내용이 없음: {account_id}")
         
         return account
+    
+    async def _handle_auth_type_change(
+        self,
+        account_id: UUID,
+        old_auth_type: AuthType,
+        new_auth_type: AuthType,
+    ) -> None:
+        """
+        인증 타입 변경 시 필요한 정리 작업을 수행합니다.
+        
+        Args:
+            account_id: 계정 ID
+            old_auth_type: 기존 인증 타입
+            new_auth_type: 새로운 인증 타입
+        """
+        self.logger.info(f"인증 타입 변경 정리 작업 시작: {account_id}")
+        
+        # 1. 기존 토큰 삭제 (TokenRepositoryPort가 필요하지만 현재 의존성에 없음)
+        # TODO: TokenRepositoryPort 의존성 추가 후 토큰 삭제 로직 구현
+        self.logger.warning(f"토큰 삭제 로직 미구현 - 수동으로 삭제 필요: {account_id}")
+        
+        # 2. 기존 인증 설정 삭제
+        try:
+            await self.auth_config_repository.delete_config(account_id)
+            self.logger.info(f"기존 인증 설정 삭제 완료: {account_id}")
+        except Exception as e:
+            self.logger.error(f"기존 인증 설정 삭제 실패: {account_id}, 오류: {str(e)}")
+        
+        # 3. 새로운 인증 설정은 별도로 생성해야 함 (client_id, client_secret 등이 필요)
+        self.logger.info(f"새로운 인증 설정은 별도 등록 필요: {new_auth_type}")
+        
+        self.logger.info(f"인증 타입 변경 정리 작업 완료: {account_id}")
     
     async def list_accounts_by_status(
         self, 

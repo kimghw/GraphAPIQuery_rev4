@@ -117,8 +117,7 @@ class AuthCodeConfig(AuthConfig):
 class DeviceCodeConfig(AuthConfig):
     """Device Code Flow 설정"""
     
-    # Device Code Flow는 추가 설정이 필요하지 않음
-    pass
+    client_secret: Optional[str] = Field(None, description="클라이언트 시크릿 (필요한 경우)")
 
 
 class Token(BaseModel):

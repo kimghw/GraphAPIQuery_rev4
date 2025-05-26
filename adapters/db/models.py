@@ -99,6 +99,7 @@ class DeviceCodeConfigModel(Base):
     
     account_id = Column(String(36), ForeignKey("accounts.id"), primary_key=True)
     client_id = Column(String(255), nullable=False, index=True)
+    client_secret = Column(Text)  # 암호화된 값 (선택적)
     tenant_id = Column(String(255), nullable=False, index=True)
     created_at = Column(DateTime, server_default=func.now(), index=True)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

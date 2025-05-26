@@ -293,6 +293,7 @@ class AuthConfigRepositoryAdapter(AuthConfigRepositoryPort):
         if existing_model:
             # 업데이트
             existing_model.client_id = config.client_id
+            existing_model.client_secret = config.client_secret
             existing_model.tenant_id = config.tenant_id
             existing_model.updated_at = datetime.utcnow()
             model = existing_model
@@ -301,6 +302,7 @@ class AuthConfigRepositoryAdapter(AuthConfigRepositoryPort):
             model = DeviceCodeConfigModel(
                 account_id=str(config.account_id),
                 client_id=config.client_id,
+                client_secret=config.client_secret,
                 tenant_id=config.tenant_id,
             )
             self.session.add(model)
@@ -383,6 +385,7 @@ class AuthConfigRepositoryAdapter(AuthConfigRepositoryPort):
         return DeviceCodeConfig(
             account_id=UUID(model.account_id),
             client_id=model.client_id,
+            client_secret=model.client_secret,
             tenant_id=model.tenant_id,
         )
 
