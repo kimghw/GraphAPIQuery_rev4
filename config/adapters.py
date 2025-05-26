@@ -1,7 +1,7 @@
 """
-설정 어댑터
+개선된 설정 어댑터
 
-Core 레이어의 ConfigPort를 구현하는 Pydantic 기반 설정 어댑터입니다.
+Redis를 제거하고 웹 서버 설정을 추가한 설정 어댑터입니다.
 """
 
 import os
@@ -23,8 +23,8 @@ class BaseConfig(BaseSettings, ConfigPort):
     # 데이터베이스 설정
     database_url: str = Field(..., env="DATABASE_URL")
     
-    # Redis 설정
-    redis_url: str = Field(default="redis://localhost:6379", env="REDIS_URL")
+    # 캐시 설정 (데이터베이스 기반)
+    cache_ttl: int = Field(default=600, env="CACHE_TTL")  # 기본 10분
     
     # Microsoft Graph API 설정
     azure_client_id: str = Field(..., env="AZURE_CLIENT_ID")
@@ -33,7 +33,7 @@ class BaseConfig(BaseSettings, ConfigPort):
     
     # OAuth 설정
     oauth_redirect_uri: str = Field(
-        default="http://localhost:8080/auth/callback",
+        default="http://localhost:5000/auth/callback",  # 5000번 포트로 변경
         env="OAUTH_REDIRECT_URI"
     )
     oauth_state_secret: str = Field(..., env="OAUTH_STATE_SECRET")
@@ -49,7 +49,7 @@ class BaseConfig(BaseSettings, ConfigPort):
     # 웹훅 설정
     webhook_secret: str = Field(..., env="WEBHOOK_SECRET")
     webhook_base_url: str = Field(
-        default="http://localhost:8000",
+        default="http://localhost:5000",  # 5000번 포트로 변경
         env="WEBHOOK_BASE_URL"
     )
     
@@ -60,7 +60,12 @@ class BaseConfig(BaseSettings, ConfigPort):
         env="LOG_FORMAT"
     )
     
-    # API 설정
+    # 웹 서버 설정 (인증용)
+    web_host: str = Field(default="0.0.0.0", env="WEB_HOST")
+    web_port: int = Field(default=5000, env="WEB_PORT")
+    web_workers: int = Field(default=1, env="WEB_WORKERS")
+    
+    # API 서버 설정 (향후 REST API용)
     api_host: str = Field(default="0.0.0.0", env="API_HOST")
     api_port: int = Field(default=8000, env="API_PORT")
     api_workers: int = Field(default=1, env="API_WORKERS")
@@ -77,8 +82,12 @@ class BaseConfig(BaseSettings, ConfigPort):
     @validator("encryption_key")
     def validate_encryption_key(cls, v):
         """암호화 키 검증"""
-        if len(v) != 32:
-            raise ValueError("암호화 키는 32바이트여야 합니다")
+        if len(v) < 32:
+            # 32바이트 미만이면 패딩
+            v = v.ljust(32, '0')
+        elif len(v) > 32:
+            # 32바이트 초과면 자르기
+            v = v[:32]
         return v
     
     @validator("log_level")
@@ -99,8 +108,8 @@ class BaseConfig(BaseSettings, ConfigPort):
     def get_database_url(self) -> str:
         return self.database_url
     
-    def get_redis_url(self) -> str:
-        return self.redis_url
+    def get_cache_ttl(self) -> int:
+        return self.cache_ttl
     
     def get_azure_client_id(self) -> str:
         return self.azure_client_id
@@ -141,6 +150,15 @@ class BaseConfig(BaseSettings, ConfigPort):
     def get_log_format(self) -> str:
         return self.log_format
     
+    def get_web_host(self) -> str:
+        return self.web_host
+    
+    def get_web_port(self) -> int:
+        return self.web_port
+    
+    def get_web_workers(self) -> int:
+        return self.web_workers
+    
     def get_api_host(self) -> str:
         return self.api_host
     
@@ -162,6 +180,14 @@ class BaseConfig(BaseSettings, ConfigPort):
             "client_id": self.azure_client_id,
             "client_secret": self.azure_client_secret,
             "tenant_id": self.azure_tenant_id,
+        }
+    
+    def get_web_config(self) -> dict:
+        """웹 서버 설정 조회"""
+        return {
+            "host": self.web_host,
+            "port": self.web_port,
+            "workers": self.web_workers,
         }
     
     def get_api_config(self) -> dict:
@@ -189,7 +215,7 @@ class DevelopmentConfig(BaseConfig):
     
     # 개발용 기본값들
     database_url: str = Field(
-        default="postgresql+asyncpg://user:password@localhost/graphapi_dev",
+        default="sqlite:///./dev_database.db",
         env="DATABASE_URL"
     )
     
@@ -210,6 +236,10 @@ class ProductionConfig(BaseConfig):
     debug: bool = False
     log_level: str = "INFO"
     
+    # 운영 환경에서는 더 많은 워커 사용
+    web_workers: int = Field(default=4, env="WEB_WORKERS")
+    api_workers: int = Field(default=4, env="API_WORKERS")
+    
     @validator("database_url")
     def validate_production_database_url(cls, v):
         """운영 환경에서는 데이터베이스 URL이 필수"""
@@ -220,8 +250,8 @@ class ProductionConfig(BaseConfig):
     @validator("azure_client_secret", "oauth_state_secret", "encryption_key", "jwt_secret_key", "webhook_secret")
     def validate_production_secrets(cls, v):
         """운영 환경에서는 모든 시크릿이 필수"""
-        if not v:
-            raise ValueError("운영 환경에서는 모든 시크릿 값이 필요합니다")
+        if not v or v.startswith("dev_"):
+            raise ValueError("운영 환경에서는 실제 시크릿 값이 필요합니다")
         return v
 
 
@@ -234,7 +264,7 @@ class TestingConfig(BaseConfig):
     
     # 테스트용 기본값들
     database_url: str = Field(
-        default="postgresql+asyncpg://user:password@localhost/graphapi_test",
+        default="sqlite:///:memory:",
         env="DATABASE_URL"
     )
     

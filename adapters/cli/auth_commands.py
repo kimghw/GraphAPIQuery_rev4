@@ -122,6 +122,22 @@ def get_auth_config(
     asyncio.run(_get_auth_config(email))
 
 
+@auth_app.command("token-status")
+def get_token_status(
+    email: str = typer.Option(..., "--email", "-e", help="계정 이메일"),
+):
+    """토큰 상태를 상세히 조회합니다."""
+    asyncio.run(_get_token_status(email))
+
+
+@auth_app.command("validate-token")
+def validate_token_integrity(
+    email: str = typer.Option(..., "--email", "-e", help="계정 이메일"),
+):
+    """토큰의 무결성을 검증합니다."""
+    asyncio.run(_validate_token_integrity(email))
+
+
 async def _start_authorization_code_flow(email: str, scope: str):
     """Authorization Code Flow 인증 시작"""
     try:
@@ -150,16 +166,193 @@ async def _start_authorization_code_flow(email: str, scope: str):
             )
             
             # 결과 출력
-            console.print(Panel.fit(
-                f"[bold green]Authorization Code Flow 시작됨[/bold green]\n\n"
-                f"[bold]계정:[/bold] {email}\n"
-                f"[bold]State:[/bold] {state}\n\n"
-                f"[bold]다음 URL로 이동하여 인증을 완료하세요:[/bold]\n"
-                f"[link]{authorization_url}[/link]\n\n"
-                f"[yellow]인증 완료 후 받은 코드로 다음 명령어를 실행하세요:[/yellow]\n"
-                f"[cyan]python main.py auth complete-auth-code --code <CODE> --state {state}[/cyan]",
-                title="🔐 Authorization Code Flow"
-            ))
+            console.print(f"[bold green]✅ Authorization Code Flow 시작됨[/bold green]")
+            console.print(f"[bold]계정:[/bold] {email}")
+            console.print(f"[bold]State:[/bold] {state}")
+            console.print()
+            console.print(f"[bold]다음 URL로 이동하여 인증을 완료하세요:[/bold]")
+            console.print(f"[link]{authorization_url}[/link]")
+            console.print()
+            console.print(f"[yellow]인증 완료 후 받은 코드로 다음 명령어를 실행하세요:[/yellow]")
+            console.print(f"[cyan]python main.py auth complete-auth-code --code <CODE> --state {state}[/cyan]")
+            
+    except Exception as e:
+        console.print(f"[red]오류 발생: {str(e)}[/red]")
+
+
+async def _get_token_status(email: str):
+    """토큰 상태 상세 조회"""
+    try:
+        factory = get_adapter_factory()
+        db_adapter = factory.get_database_adapter()
+        await db_adapter.initialize()
+        
+        async with db_adapter.get_session() as session:
+            # 계정 조회
+            account_usecase = factory.create_account_management_usecase(session)
+            account = await account_usecase.get_account_by_email(email)
+            
+            if not account:
+                console.print(f"[red]계정을 찾을 수 없습니다: {email}[/red]")
+                return
+            
+            # 토큰 상태 조회
+            auth_usecase = factory.create_authentication_usecase(session)
+            
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console
+            ) as progress:
+                task = progress.add_task("토큰 상태 조회 중...", total=None)
+                
+                status = await auth_usecase.get_token_status(account.id)
+                
+                progress.update(task, description="완료!")
+            
+            if not status:
+                console.print(f"[red]토큰을 찾을 수 없습니다: {email}[/red]")
+                return
+            
+            # 기본 정보 테이블
+            basic_table = Table(title=f"🔑 토큰 기본 정보: {email}")
+            basic_table.add_column("속성", style="cyan")
+            basic_table.add_column("값", style="white")
+            
+            basic_table.add_row("계정 ID", status["account_id"])
+            basic_table.add_row("토큰 타입", status["token_type"])
+            basic_table.add_row("권한 범위", status["scope"])
+            basic_table.add_row("생성 시간", status["created_at"])
+            basic_table.add_row("수정 시간", status["updated_at"])
+            basic_table.add_row("암호화 여부", "✅ 예" if status["is_encrypted"] else "❌ 아니오")
+            basic_table.add_row("갱신 가능", "✅ 예" if status["can_refresh"] else "❌ 아니오")
+            
+            console.print(basic_table)
+            
+            # 만료 정보 테이블
+            expiry_table = Table(title="⏰ 만료 정보")
+            expiry_table.add_column("구분", style="cyan")
+            expiry_table.add_column("만료 시간", style="white")
+            expiry_table.add_column("상태", style="white")
+            
+            # DB 만료 정보
+            db_status = "❌ 만료됨" if status["db_is_expired"] else "✅ 유효함"
+            if not status["db_is_expired"] and status["db_is_near_expiry"]:
+                db_status = "⚠️ 곧 만료"
+            
+            expiry_table.add_row("DB 기준", status["db_expires_at"], db_status)
+            
+            # JWT 만료 정보 (있는 경우)
+            if status.get("jwt_expires_at"):
+                jwt_status = "❌ 만료됨" if status["jwt_is_expired"] else "✅ 유효함"
+                expiry_table.add_row("JWT 기준", status["jwt_expires_at"], jwt_status)
+                
+                # 시간 차이 정보
+                time_diff = status.get("expiry_time_diff_seconds", 0)
+                match_status = "✅ 일치" if status.get("expiry_times_match", False) else f"❌ 차이: {time_diff:.0f}초"
+                expiry_table.add_row("시간 일치성", "-", match_status)
+            
+            console.print(expiry_table)
+            
+            # JWT 페이로드 정보 (있는 경우)
+            if status.get("jwt_payload"):
+                jwt_table = Table(title="🎫 JWT 페이로드 정보")
+                jwt_table.add_column("속성", style="cyan")
+                jwt_table.add_column("값", style="white")
+                
+                payload = status["jwt_payload"]
+                jwt_fields = [
+                    ("발급자 (iss)", payload.get("iss")),
+                    ("대상 (aud)", payload.get("aud")),
+                    ("사용자 ID (sub)", payload.get("sub")),
+                    ("앱 ID (appid)", payload.get("appid")),
+                    ("테넌트 ID (tid)", payload.get("tid")),
+                    ("사용자명 (upn)", payload.get("upn")),
+                    ("이름 (name)", payload.get("name")),
+                    ("권한 (scp)", payload.get("scp")),
+                ]
+                
+                for field_name, field_value in jwt_fields:
+                    if field_value:
+                        jwt_table.add_row(field_name, str(field_value))
+                
+                console.print(jwt_table)
+            
+            # 오류 정보 (있는 경우)
+            if status.get("decryption_error"):
+                console.print(Panel.fit(
+                    f"[red]복호화 오류:[/red] {status['decryption_error']}",
+                    title="⚠️ 오류"
+                ))
+            
+    except Exception as e:
+        console.print(f"[red]오류 발생: {str(e)}[/red]")
+
+
+async def _validate_token_integrity(email: str):
+    """토큰 무결성 검증"""
+    try:
+        factory = get_adapter_factory()
+        db_adapter = factory.get_database_adapter()
+        await db_adapter.initialize()
+        
+        async with db_adapter.get_session() as session:
+            # 계정 조회
+            account_usecase = factory.create_account_management_usecase(session)
+            account = await account_usecase.get_account_by_email(email)
+            
+            if not account:
+                console.print(f"[red]계정을 찾을 수 없습니다: {email}[/red]")
+                return
+            
+            # 토큰 무결성 검증
+            auth_usecase = factory.create_authentication_usecase(session)
+            
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console
+            ) as progress:
+                task = progress.add_task("토큰 무결성 검증 중...", total=None)
+                
+                result = await auth_usecase.validate_token_integrity(account.id)
+                
+                progress.update(task, description="완료!")
+            
+            # 검증 결과 테이블
+            table = Table(title=f"🔍 토큰 무결성 검증: {email}")
+            table.add_column("검증 항목", style="cyan")
+            table.add_column("결과", style="white")
+            table.add_column("상태", style="white")
+            
+            checks = [
+                ("토큰 존재", result["token_exists"], "토큰이 데이터베이스에 존재하는지 확인"),
+                ("암호화 여부", result["is_encrypted"], "토큰이 암호화되어 있는지 확인"),
+                ("복호화 성공", result["decryption_success"], "토큰을 성공적으로 복호화할 수 있는지 확인"),
+                ("유효한 JWT", result["is_valid_jwt"], "JWT 형식이 올바른지 확인"),
+                ("만료시간 일관성", result["expiry_times_consistent"], "DB와 JWT 만료시간이 일치하는지 확인"),
+                ("토큰 유효성", result["token_not_expired"], "토큰이 만료되지 않았는지 확인"),
+            ]
+            
+            for check_name, check_result, description in checks:
+                status_icon = "✅" if check_result else "❌"
+                result_text = "통과" if check_result else "실패"
+                table.add_row(check_name, f"{status_icon} {result_text}", description)
+            
+            console.print(table)
+            
+            # 전체 결과
+            overall_status = result["overall_valid"]
+            if overall_status:
+                console.print(Panel.fit(
+                    "[bold green]✅ 토큰이 유효하고 무결성에 문제가 없습니다.[/bold green]",
+                    title="검증 결과"
+                ))
+            else:
+                console.print(Panel.fit(
+                    "[bold red]❌ 토큰에 문제가 있습니다. 새로 인증하는 것을 권장합니다.[/bold red]",
+                    title="검증 결과"
+                ))
             
     except Exception as e:
         console.print(f"[red]오류 발생: {str(e)}[/red]")
@@ -170,6 +363,7 @@ async def _complete_authorization_code_flow(code: str, state: str, scope: str):
     try:
         factory = get_adapter_factory()
         db_adapter = factory.get_database_adapter()
+        await db_adapter.initialize()
         
         async with db_adapter.get_session() as session:
             auth_usecase = factory.create_authentication_usecase(session)
@@ -205,6 +399,7 @@ async def _start_device_code_flow(email: str, scope: str):
     try:
         factory = get_adapter_factory()
         db_adapter = factory.get_database_adapter()
+        await db_adapter.initialize()
         
         async with db_adapter.get_session() as session:
             # 계정 조회
@@ -247,6 +442,7 @@ async def _poll_device_code_flow(device_code: str, scope: str, max_attempts: int
     try:
         factory = get_adapter_factory()
         db_adapter = factory.get_database_adapter()
+        await db_adapter.initialize()
         
         async with db_adapter.get_session() as session:
             auth_usecase = factory.create_authentication_usecase(session)
@@ -294,6 +490,7 @@ async def _refresh_token(email: str):
         factory = get_adapter_factory()
         
         db_adapter = factory.get_database_adapter()
+        await db_adapter.initialize()
         
         async with db_adapter.get_session() as session:
             # 계정 조회
@@ -344,6 +541,7 @@ async def _revoke_token(email: str, force: bool):
         
         factory = get_adapter_factory()
         db_adapter = factory.get_database_adapter()
+        await db_adapter.initialize()
         
         async with db_adapter.get_session() as session:
             # 계정 조회
@@ -372,6 +570,7 @@ async def _get_user_profile(email: str):
     try:
         factory = get_adapter_factory()
         db_adapter = factory.get_database_adapter()
+        await db_adapter.initialize()
         
         async with db_adapter.get_session() as session:
             # 계정 조회
@@ -434,6 +633,7 @@ async def _check_expiring_tokens(minutes: int):
     try:
         factory = get_adapter_factory()
         db_adapter = factory.get_database_adapter()
+        await db_adapter.initialize()
         
         async with db_adapter.get_session() as session:
             auth_usecase = factory.create_authentication_usecase(session)
@@ -458,6 +658,8 @@ async def _check_expiring_tokens(minutes: int):
 async def _get_auth_config(email: str):
     """인증 설정 조회"""
     try:
+        # 설정 및 데이터
+
         # 설정 및 데이터베이스 초기화
         config = get_config()
         db_adapter = initialize_database(config)
@@ -511,6 +713,206 @@ async def _get_auth_config(email: str):
             console.print(table)
         
         await db_adapter.close()
+            
+    except Exception as e:
+        console.print(f"[red]오류 발생: {str(e)}[/red]")
+
+
+
+@auth_app.command("show-raw-token")
+def show_raw_token(
+    email: str = typer.Option(..., "--email", "-e", help="계정 이메일"),
+    show_encrypted: bool = typer.Option(False, "--show-encrypted", help="암호화된 토큰도 표시"),
+):
+    """토큰의 원본 값을 표시합니다."""
+    asyncio.run(_show_raw_token(email, show_encrypted))
+
+
+@auth_app.command("log-raw-token")
+def log_raw_token(
+    email: str = typer.Option(..., "--email", "-e", help="계정 이메일"),
+):
+    """토큰의 원본 값을 로그로 출력합니다."""
+    asyncio.run(_log_raw_token(email))
+
+
+async def _show_raw_token(email: str, show_encrypted: bool):
+    """토큰 원본 값 표시"""
+    try:
+        factory = get_adapter_factory()
+        db_adapter = factory.get_database_adapter()
+        await db_adapter.initialize()
+        
+        async with db_adapter.get_session() as session:
+            # 계정 조회
+            account_usecase = factory.create_account_management_usecase(session)
+            account = await account_usecase.get_account_by_email(email)
+            
+            if not account:
+                console.print(f"[red]계정을 찾을 수 없습니다: {email}[/red]")
+                return
+            
+            # 토큰 조회
+            auth_usecase = factory.create_authentication_usecase(session)
+            
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console
+            ) as progress:
+                task = progress.add_task("토큰 조회 중...", total=None)
+                
+                # 토큰 리포지토리에서 직접 조회
+                token_repo = factory.create_token_repository(session)
+                token_record = await token_repo.get_by_account_id(account.id)
+                
+                progress.update(task, description="완료!")
+            
+            if not token_record:
+                console.print(f"[red]토큰을 찾을 수 없습니다: {email}[/red]")
+                return
+            
+            # 암호화된 토큰 표시 (옵션)
+            if show_encrypted:
+                console.print(Panel.fit(
+                    f"[bold yellow]암호화된 토큰 (DB 저장값):[/bold yellow]\n\n"
+                    f"[dim]{token_record.encrypted_access_token}[/dim]",
+                    title="🔒 암호화된 토큰"
+                ))
+                console.print()
+            
+            # 복호화된 토큰 표시
+            try:
+                # 암호화 서비스를 통해 복호화
+                encryption_service = factory.get_encryption_service()
+                decrypted_token = await encryption_service.decrypt(token_record.encrypted_access_token)
+                
+                console.print(Panel.fit(
+                    f"[bold green]복호화된 액세스 토큰:[/bold green]\n\n"
+                    f"[white]{decrypted_token}[/white]",
+                    title="🔓 원본 액세스 토큰"
+                ))
+                
+                # 리프레시 토큰이 있는 경우
+                if token_record.encrypted_refresh_token:
+                    decrypted_refresh_token = await encryption_service.decrypt(token_record.encrypted_refresh_token)
+                    console.print()
+                    console.print(Panel.fit(
+                        f"[bold blue]복호화된 리프레시 토큰:[/bold blue]\n\n"
+                        f"[white]{decrypted_refresh_token}[/white]",
+                        title="🔄 원본 리프레시 토큰"
+                    ))
+                
+                # JWT 디코딩 시도
+                try:
+                    import jwt
+                    import json
+                    
+                    # JWT 헤더와 페이로드 디코딩 (서명 검증 없이)
+                    decoded_token = jwt.decode(decrypted_token, options={"verify_signature": False})
+                    
+                    console.print()
+                    console.print(Panel.fit(
+                        f"[bold cyan]JWT 페이로드 (디코딩됨):[/bold cyan]\n\n"
+                        f"[white]{json.dumps(decoded_token, indent=2, ensure_ascii=False)}[/white]",
+                        title="�� JWT 페이로드"
+                    ))
+                    
+                except Exception as jwt_error:
+                    console.print()
+                    console.print(Panel.fit(
+                        f"[yellow]JWT 디코딩 실패: {str(jwt_error)}[/yellow]",
+                        title="⚠️ JWT 디코딩 오류"
+                    ))
+                
+            except Exception as decrypt_error:
+                console.print(Panel.fit(
+                    f"[red]토큰 복호화 실패: {str(decrypt_error)}[/red]",
+                    title="❌ 복호화 오류"
+                ))
+            
+            # 토큰 메타데이터 표시
+            console.print()
+            metadata_table = Table(title="📊 토큰 메타데이터")
+            metadata_table.add_column("속성", style="cyan")
+            metadata_table.add_column("값", style="white")
+            
+            metadata_table.add_row("토큰 ID", str(token_record.id))
+            metadata_table.add_row("계정 ID", str(token_record.account_id))
+            metadata_table.add_row("토큰 타입", token_record.token_type)
+            metadata_table.add_row("권한 범위", token_record.scope or "없음")
+            metadata_table.add_row("만료 시간", str(token_record.expires_at))
+            metadata_table.add_row("생성 시간", str(token_record.created_at))
+            metadata_table.add_row("수정 시간", str(token_record.updated_at))
+            metadata_table.add_row("리프레시 토큰 존재", "✅ 예" if token_record.encrypted_refresh_token else "❌ 아니오")
+            
+            console.print(metadata_table)
+            
+    except Exception as e:
+        console.print(f"[red]오류 발생: {str(e)}[/red]")
+
+
+async def _log_raw_token(email: str):
+    """토큰 원본 값을 로그로 출력"""
+    try:
+        factory = get_adapter_factory()
+        db_adapter = factory.get_database_adapter()
+        await db_adapter.initialize()
+        
+        async with db_adapter.get_session() as session:
+            # 계정 조회
+            account_usecase = factory.create_account_management_usecase(session)
+            account = await account_usecase.get_account_by_email(email)
+            
+            if not account:
+                console.print(f"[red]계정을 찾을 수 없습니다: {email}[/red]")
+                return
+            
+            # 인증 유즈케이스의 log_raw_token_values 메서드 호출
+            auth_usecase = factory.create_authentication_usecase(session)
+            
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console
+            ) as progress:
+                task = progress.add_task("토큰 원본 값 로그 출력 중...", total=None)
+                
+                result = await auth_usecase.log_raw_token_values(account.id)
+                
+                progress.update(task, description="완료!")
+            
+            if "error" in result:
+                console.print(f"[red]오류: {result['error']}[/red]")
+                return
+            
+            # 결과 요약 표시
+            console.print(Panel.fit(
+                f"[bold green]토큰 원본 값이 로그에 출력되었습니다![/bold green]\n\n"
+                f"[bold]계정 ID:[/bold] {result['account_id']}\n"
+                f"[bold]토큰 타입:[/bold] {result['token_type']}\n"
+                f"[bold]권한 범위:[/bold] {result['scope']}\n"
+                f"[bold]생성 시간:[/bold] {result['created_at']}\n"
+                f"[bold]만료 시간:[/bold] {result['expires_at']}\n\n"
+                f"[yellow]상세한 토큰 정보는 로그를 확인하세요.[/yellow]\n"
+                f"[dim]로그에서 '[토큰 원본]' 태그로 검색하면 관련 정보를 찾을 수 있습니다.[/dim]",
+                title="📝 토큰 로그 출력 완료"
+            ))
+            
+            # 추가 정보가 있는 경우 표시
+            if result.get("jwt_header") or result.get("jwt_payload"):
+                console.print()
+                console.print("[cyan]JWT 토큰 정보가 로그에 포함되었습니다:[/cyan]")
+                
+                if result.get("jwt_header"):
+                    console.print("  • JWT Header 정보")
+                if result.get("jwt_payload"):
+                    console.print("  • JWT Payload 정보")
+                    console.print("  • 만료 시간 비교 정보")
+            
+            if result.get("jwt_parse_error"):
+                console.print()
+                console.print(f"[yellow]JWT 파싱 중 오류 발생: {result['jwt_parse_error']}[/yellow]")
             
     except Exception as e:
         console.print(f"[red]오류 발생: {str(e)}[/red]")

@@ -7,7 +7,7 @@ SQLite 호환성을 위해 UUID는 String으로, ARRAY는 JSON으로 처리합�
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
 from sqlalchemy import (
@@ -27,6 +27,13 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from core.domain.entities import AccountStatus, AuthType, SyncStatus
+
+# 서울 시간대 정의
+KST = timezone(timedelta(hours=9))
+
+def now_kst() -> datetime:
+    """현재 서울 시간을 반환합니다."""
+    return datetime.now(KST).replace(tzinfo=None)
 
 Base = declarative_base()
 
@@ -116,8 +123,8 @@ class TokenModel(Base):
     token_type = Column(String(50), default="Bearer")
     expires_at = Column(DateTime, nullable=False, index=True)
     scope = Column(Text)
-    created_at = Column(DateTime, server_default=func.now(), index=True)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime, default=now_kst, index=True)
+    updated_at = Column(DateTime, default=now_kst, onupdate=now_kst)
     
     # 복합 인덱스
     __table_args__ = (
@@ -242,3 +249,20 @@ class WebhookSubscriptionModel(Base):
     
     # 관계 설정
     account = relationship("AccountModel", back_populates="webhook_subscriptions")
+
+
+class CacheModel(Base):
+    """캐시 테이블 모델"""
+    
+    __tablename__ = "cache"
+    
+    key = Column(String(255), primary_key=True, index=True)
+    value = Column(Text, nullable=False)
+    expires_at = Column(DateTime, nullable=True, index=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    
+    # 복합 인덱스
+    __table_args__ = (
+        Index('idx_cache_key_expires', 'key', 'expires_at'),
+    )

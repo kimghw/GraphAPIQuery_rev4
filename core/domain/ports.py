@@ -489,29 +489,156 @@ class LoggerPort(ABC):
 class ConfigPort(ABC):
     """설정 포트"""
     
+    # 환경 설정
+    @abstractmethod
+    def get_environment(self) -> str:
+        """환경 조회 (development, production, testing)"""
+        pass
+    
+    @abstractmethod
+    def is_debug(self) -> bool:
+        """디버그 모드 여부"""
+        pass
+    
+    # 데이터베이스 설정
     @abstractmethod
     def get_database_url(self) -> str:
         """데이터베이스 URL 조회"""
         pass
     
+    # 캐시 설정 (Redis 제거, 데이터베이스 기반으로 변경)
     @abstractmethod
-    def get_redis_url(self) -> str:
-        """Redis URL 조회"""
+    def get_cache_ttl(self) -> int:
+        """캐시 기본 TTL (초) 조회"""
         pass
     
+    # Microsoft Azure 설정
+    @abstractmethod
+    def get_azure_client_id(self) -> str:
+        """Azure 클라이언트 ID 조회"""
+        pass
+    
+    @abstractmethod
+    def get_azure_client_secret(self) -> str:
+        """Azure 클라이언트 시크릿 조회"""
+        pass
+    
+    @abstractmethod
+    def get_azure_tenant_id(self) -> str:
+        """Azure 테넌트 ID 조회"""
+        pass
+    
+    # OAuth 설정
+    @abstractmethod
+    def get_oauth_redirect_uri(self) -> str:
+        """OAuth 리다이렉트 URI 조회"""
+        pass
+    
+    @abstractmethod
+    def get_oauth_state_secret(self) -> str:
+        """OAuth State 시크릿 키 조회"""
+        pass
+    
+    # 보안 설정
     @abstractmethod
     def get_encryption_key(self) -> str:
         """암호화 키 조회"""
         pass
     
     @abstractmethod
+    def get_jwt_secret_key(self) -> str:
+        """JWT 시크릿 키 조회"""
+        pass
+    
+    @abstractmethod
+    def get_jwt_algorithm(self) -> str:
+        """JWT 알고리즘 조회"""
+        pass
+    
+    @abstractmethod
+    def get_jwt_expire_minutes(self) -> int:
+        """JWT 만료 시간(분) 조회"""
+        pass
+    
+    # 웹훅 설정
+    @abstractmethod
+    def get_webhook_secret(self) -> str:
+        """웹훅 시크릿 조회"""
+        pass
+    
+    @abstractmethod
+    def get_webhook_base_url(self) -> str:
+        """웹훅 베이스 URL 조회"""
+        pass
+    
+    # 로깅 설정
+    @abstractmethod
+    def get_log_level(self) -> str:
+        """로그 레벨 조회"""
+        pass
+    
+    @abstractmethod
+    def get_log_format(self) -> str:
+        """로그 포맷 조회"""
+        pass
+    
+    # 웹 서버 설정
+    @abstractmethod
+    def get_web_host(self) -> str:
+        """웹 서버 호스트 조회"""
+        pass
+    
+    @abstractmethod
+    def get_web_port(self) -> int:
+        """웹 서버 포트 조회"""
+        pass
+    
+    @abstractmethod
+    def get_web_workers(self) -> int:
+        """웹 서버 워커 수 조회"""
+        pass
+    
+    # API 서버 설정 (향후 REST API용)
+    @abstractmethod
+    def get_api_host(self) -> str:
+        """API 서버 호스트 조회"""
+        pass
+    
+    @abstractmethod
+    def get_api_port(self) -> int:
+        """API 서버 포트 조회"""
+        pass
+    
+    @abstractmethod
+    def get_api_workers(self) -> int:
+        """API 서버 워커 수 조회"""
+        pass
+    
+    # 동기화 설정
+    @abstractmethod
+    def get_sync_batch_size(self) -> int:
+        """동기화 배치 크기 조회"""
+        pass
+    
+    @abstractmethod
+    def get_sync_interval_minutes(self) -> int:
+        """동기화 간격(분) 조회"""
+        pass
+    
+    # 복합 설정 조회 메서드
+    @abstractmethod
     def get_azure_config(self) -> dict:
         """Azure 설정 조회"""
         pass
     
     @abstractmethod
+    def get_web_config(self) -> dict:
+        """웹 서버 설정 조회"""
+        pass
+    
+    @abstractmethod
     def get_api_config(self) -> dict:
-        """API 설정 조회"""
+        """API 서버 설정 조회"""
         pass
     
     @abstractmethod

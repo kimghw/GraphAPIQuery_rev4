@@ -485,9 +485,10 @@ class AuthenticationUseCase:
                 token_response['refresh_token']
             )
         
-        # 만료 시간 계산
+        # 만료 시간 계산 (서울 시간)
+        from ..domain.entities import now_kst
         expires_in = token_response.get('expires_in', 3600)
-        expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
+        expires_at = now_kst() + timedelta(seconds=expires_in)
         
         # 토큰 엔티티 생성
         token = Token(
@@ -531,3 +532,275 @@ class AuthenticationUseCase:
         
         self.logger.info(f"만료 임박 토큰 갱신 완료: {refreshed_count}/{len(expiring_tokens)}")
         return refreshed_count
+    
+    async def get_token_status(self, account_id: UUID) -> Optional[Dict]:
+        """
+        토큰 상태를 상세히 조회합니다.
+        
+        Args:
+            account_id: 계정 ID
+            
+        Returns:
+            토큰 상태 정보 딕셔너리 또는 None
+        """
+        self.logger.debug(f"토큰 상태 조회: {account_id}")
+        
+        # 토큰 조회
+        token = await self.token_repository.get_by_account_id(account_id)
+        if not token:
+            return None
+        
+        try:
+            # 기본 토큰 정보
+            status = {
+                "account_id": str(token.account_id),
+                "token_type": token.token_type,
+                "scope": token.scope,
+                "created_at": token.created_at.isoformat(),
+                "updated_at": token.updated_at.isoformat(),
+                "db_expires_at": token.expires_at.isoformat(),
+                "is_encrypted": token.is_encrypted(),
+                "can_refresh": token.can_refresh(),
+                "db_is_expired": token.is_expired(),
+                "db_is_near_expiry": token.is_near_expiry(),
+            }
+            
+            # 암호화된 토큰인 경우 복호화하여 JWT 정보 추출
+            if token.is_encrypted():
+                try:
+                    decrypted_token = await self.encryption_service.decrypt(token.access_token)
+                    status["is_jwt"] = token.is_jwt_token(decrypted_token)
+                    
+                    if status["is_jwt"]:
+                        jwt_expiry = token.extract_jwt_expiry(decrypted_token)
+                        if jwt_expiry:
+                            status["jwt_expires_at"] = jwt_expiry.isoformat()
+                            status["jwt_is_expired"] = token.is_expired_by_jwt(decrypted_token)
+                            
+                            # JWT와 DB 만료 시간 비교
+                            time_diff = abs((jwt_expiry - token.expires_at).total_seconds())
+                            status["expiry_time_diff_seconds"] = time_diff
+                            status["expiry_times_match"] = time_diff < 60  # 1분 이내 차이면 일치로 간주
+                        
+                        # JWT 페이로드 정보 추출
+                        try:
+                            import json
+                            import base64
+                            
+                            parts = decrypted_token.split('.')
+                            if len(parts) == 3:
+                                payload = parts[1]
+                                payload += '=' * (4 - len(payload) % 4)
+                                decoded_bytes = base64.urlsafe_b64decode(payload)
+                                payload_data = json.loads(decoded_bytes.decode('utf-8'))
+                                
+                                status["jwt_payload"] = {
+                                    "iss": payload_data.get("iss"),
+                                    "aud": payload_data.get("aud"),
+                                    "sub": payload_data.get("sub"),
+                                    "appid": payload_data.get("appid"),
+                                    "tid": payload_data.get("tid"),
+                                    "upn": payload_data.get("upn"),
+                                    "name": payload_data.get("name"),
+                                    "scp": payload_data.get("scp"),
+                                }
+                        except Exception as e:
+                            self.logger.warning(f"JWT 페이로드 파싱 실패: {str(e)}")
+                            
+                except Exception as e:
+                    self.logger.error(f"토큰 복호화 실패: {str(e)}")
+                    status["decryption_error"] = str(e)
+            else:
+                # 암호화되지 않은 토큰
+                status["is_jwt"] = token.is_jwt_token()
+            
+            return status
+            
+        except Exception as e:
+            self.logger.error(f"토큰 상태 조회 실패: {account_id}, 오류: {str(e)}")
+            return None
+    
+    async def validate_token_integrity(self, account_id: UUID) -> Dict[str, bool]:
+        """
+        토큰의 무결성을 검증합니다.
+        
+        Args:
+            account_id: 계정 ID
+            
+        Returns:
+            검증 결과 딕셔너리
+        """
+        self.logger.debug(f"토큰 무결성 검증: {account_id}")
+        
+        result = {
+            "token_exists": False,
+            "is_encrypted": False,
+            "decryption_success": False,
+            "is_valid_jwt": False,
+            "expiry_times_consistent": False,
+            "token_not_expired": False,
+            "overall_valid": False,
+        }
+        
+        # 토큰 조회
+        token = await self.token_repository.get_by_account_id(account_id)
+        if not token:
+            return result
+        
+        result["token_exists"] = True
+        result["is_encrypted"] = token.is_encrypted()
+        
+        try:
+            if token.is_encrypted():
+                # 복호화 시도
+                decrypted_token = await self.encryption_service.decrypt(token.access_token)
+                result["decryption_success"] = True
+                
+                # JWT 유효성 검증
+                if token.is_jwt_token(decrypted_token):
+                    result["is_valid_jwt"] = True
+                    
+                    # 만료 시간 일관성 검증
+                    jwt_expiry = token.extract_jwt_expiry(decrypted_token)
+                    if jwt_expiry:
+                        time_diff = abs((jwt_expiry - token.expires_at).total_seconds())
+                        result["expiry_times_consistent"] = time_diff < 300  # 5분 이내 차이 허용
+                        
+                        # JWT 기준 만료 여부 확인
+                        result["token_not_expired"] = not token.is_expired_by_jwt(decrypted_token)
+                    else:
+                        # JWT 만료 시간 추출 실패 시 DB 기준 사용
+                        result["token_not_expired"] = not token.is_expired()
+                else:
+                    # JWT가 아닌 경우 DB 기준 사용
+                    result["token_not_expired"] = not token.is_expired()
+                    result["expiry_times_consistent"] = True  # JWT가 아니므로 일관성 문제 없음
+            else:
+                # 암호화되지 않은 토큰
+                result["decryption_success"] = True
+                result["is_valid_jwt"] = token.is_jwt_token()
+                result["token_not_expired"] = not token.is_expired()
+                result["expiry_times_consistent"] = True
+            
+            # 전체 유효성 판단
+            result["overall_valid"] = (
+                result["token_exists"] and
+                result["decryption_success"] and
+                result["expiry_times_consistent"] and
+                result["token_not_expired"]
+            )
+            
+        except Exception as e:
+            self.logger.error(f"토큰 무결성 검증 실패: {account_id}, 오류: {str(e)}")
+        
+        return result
+    
+    async def log_raw_token_values(self, account_id: UUID) -> Dict[str, str]:
+        """
+        토큰의 원본 값들을 로그로 출력합니다.
+        
+        Args:
+            account_id: 계정 ID
+            
+        Returns:
+            토큰 원본 값들이 포함된 딕셔너리
+        """
+        self.logger.info(f"토큰 원본 값 로그 출력 시작: {account_id}")
+        
+        # 토큰 조회
+        token = await self.token_repository.get_by_account_id(account_id)
+        if not token:
+            self.logger.warning(f"토큰을 찾을 수 없음: {account_id}")
+            return {"error": "토큰을 찾을 수 없습니다"}
+        
+        result = {
+            "account_id": str(account_id),
+            "token_type": token.token_type,
+            "scope": token.scope,
+            "created_at": token.created_at.isoformat(),
+            "expires_at": token.expires_at.isoformat(),
+        }
+        
+        try:
+            # 암호화된 액세스 토큰 복호화
+            if token.is_encrypted():
+                decrypted_access_token = await self.encryption_service.decrypt(token.access_token)
+                result["encrypted_access_token"] = token.access_token
+                result["decrypted_access_token"] = decrypted_access_token
+                
+                self.logger.info(f"[토큰 원본] 계정 ID: {account_id}")
+                self.logger.info(f"[토큰 원본] 암호화된 액세스 토큰: {token.access_token}")
+                self.logger.info(f"[토큰 원본] 복호화된 액세스 토큰: {decrypted_access_token}")
+                
+                # 리프레시 토큰이 있는 경우
+                if token.refresh_token:
+                    decrypted_refresh_token = await self.encryption_service.decrypt(token.refresh_token)
+                    result["encrypted_refresh_token"] = token.refresh_token
+                    result["decrypted_refresh_token"] = decrypted_refresh_token
+                    
+                    self.logger.info(f"[토큰 원본] 암호화된 리프레시 토큰: {token.refresh_token}")
+                    self.logger.info(f"[토큰 원본] 복호화된 리프레시 토큰: {decrypted_refresh_token}")
+                
+                # JWT 토큰인 경우 페이로드 정보도 출력
+                if token.is_jwt_token(decrypted_access_token):
+                    self.logger.info(f"[토큰 원본] JWT 토큰 확인됨")
+                    
+                    try:
+                        import json
+                        import base64
+                        
+                        parts = decrypted_access_token.split('.')
+                        if len(parts) == 3:
+                            # Header 디코딩
+                            header = parts[0]
+                            header += '=' * (4 - len(header) % 4)
+                            header_data = json.loads(base64.urlsafe_b64decode(header).decode('utf-8'))
+                            
+                            # Payload 디코딩
+                            payload = parts[1]
+                            payload += '=' * (4 - len(payload) % 4)
+                            payload_data = json.loads(base64.urlsafe_b64decode(payload).decode('utf-8'))
+                            
+                            result["jwt_header"] = header_data
+                            result["jwt_payload"] = payload_data
+                            
+                            self.logger.info(f"[토큰 원본] JWT Header: {json.dumps(header_data, indent=2)}")
+                            self.logger.info(f"[토큰 원본] JWT Payload: {json.dumps(payload_data, indent=2)}")
+                            
+                            # 만료 시간 비교 - Token 클래스의 메서드 사용
+                            jwt_expiry = token.extract_jwt_expiry(decrypted_access_token)
+                            if jwt_expiry:
+                                self.logger.info(f"[토큰 원본] JWT 만료 시간: {jwt_expiry.isoformat()}")
+                                self.logger.info(f"[토큰 원본] DB 만료 시간: {token.expires_at.isoformat()}")
+                                
+                                time_diff = abs((jwt_expiry - token.expires_at).total_seconds())
+                                self.logger.info(f"[토큰 원본] 만료 시간 차이: {time_diff}초")
+                    
+                    except Exception as e:
+                        self.logger.error(f"JWT 파싱 실패: {str(e)}")
+                        result["jwt_parse_error"] = str(e)
+            else:
+                # 암호화되지 않은 토큰
+                result["access_token"] = token.access_token
+                self.logger.info(f"[토큰 원본] 계정 ID: {account_id}")
+                self.logger.info(f"[토큰 원본] 액세스 토큰 (암호화되지 않음): {token.access_token}")
+                
+                if token.refresh_token:
+                    result["refresh_token"] = token.refresh_token
+                    self.logger.info(f"[토큰 원본] 리프레시 토큰 (암호화되지 않음): {token.refresh_token}")
+            
+            # 토큰 상태 정보
+            self.logger.info(f"[토큰 원본] 토큰 타입: {token.token_type}")
+            self.logger.info(f"[토큰 원본] 권한 범위: {token.scope}")
+            self.logger.info(f"[토큰 원본] 생성 시간: {token.created_at.isoformat()}")
+            self.logger.info(f"[토큰 원본] 만료 시간: {token.expires_at.isoformat()}")
+            self.logger.info(f"[토큰 원본] 만료 여부: {token.is_expired()}")
+            self.logger.info(f"[토큰 원본] 갱신 가능 여부: {token.can_refresh()}")
+            
+        except Exception as e:
+            error_msg = f"토큰 복호화 실패: {str(e)}"
+            self.logger.error(f"[토큰 원본] {error_msg}")
+            result["error"] = error_msg
+        
+        self.logger.info(f"토큰 원본 값 로그 출력 완료: {account_id}")
+        return result

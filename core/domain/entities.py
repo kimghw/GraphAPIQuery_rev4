@@ -5,12 +5,19 @@
 모든 엔티티는 Pydantic 모델을 기반으로 하여 타입 안정성을 보장합니다.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from enum import Enum
 from typing import List, Optional
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, validator
+
+# 서울 시간대 정의
+KST = timezone(timedelta(hours=9))
+
+def now_kst() -> datetime:
+    """현재 서울 시간을 반환합니다."""
+    return datetime.now(KST).replace(tzinfo=None)
 
 
 class AuthType(str, Enum):
@@ -50,8 +57,8 @@ class Account(BaseModel):
     auth_type: AuthType = Field(..., description="인증 방식")
     status: AccountStatus = Field(default=AccountStatus.INACTIVE, description="계정 상태")
     tenant_id: Optional[str] = Field(None, description="Azure AD 테넌트 ID")
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="생성 시간")
-    updated_at: datetime = Field(default_factory=datetime.utcnow, description="수정 시간")
+    created_at: datetime = Field(default_factory=now_kst, description="생성 시간")
+    updated_at: datetime = Field(default_factory=now_kst, description="수정 시간")
     last_sync_at: Optional[datetime] = Field(None, description="마지막 동기화 시간")
     
     @validator('email')
@@ -72,17 +79,17 @@ class Account(BaseModel):
     def activate(self) -> None:
         """계정 활성화"""
         self.status = AccountStatus.ACTIVE
-        self.updated_at = datetime.utcnow()
+        self.updated_at = now_kst()
     
     def deactivate(self) -> None:
         """계정 비활성화"""
         self.status = AccountStatus.INACTIVE
-        self.updated_at = datetime.utcnow()
+        self.updated_at = now_kst()
     
     def mark_error(self) -> None:
         """계정을 오류 상태로 표시"""
         self.status = AccountStatus.ERROR
-        self.updated_at = datetime.utcnow()
+        self.updated_at = now_kst()
 
 
 class AuthConfig(BaseModel):
@@ -123,21 +130,66 @@ class Token(BaseModel):
     token_type: str = Field(default="Bearer", description="토큰 타입")
     expires_at: datetime = Field(..., description="만료 시간")
     scope: str = Field(..., description="권한 범위")
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="생성 시간")
-    updated_at: datetime = Field(default_factory=datetime.utcnow, description="수정 시간")
+    created_at: datetime = Field(default_factory=now_kst, description="생성 시간")
+    updated_at: datetime = Field(default_factory=now_kst, description="수정 시간")
     
     def is_expired(self) -> bool:
         """토큰이 만료되었는지 확인"""
-        return datetime.utcnow() >= self.expires_at
+        return now_kst() >= self.expires_at
     
     def is_near_expiry(self, minutes: int = 5) -> bool:
         """토큰이 곧 만료될지 확인"""
-        from datetime import timedelta
-        return datetime.utcnow() + timedelta(minutes=minutes) >= self.expires_at
+        return now_kst() + timedelta(minutes=minutes) >= self.expires_at
     
     def can_refresh(self) -> bool:
         """토큰 갱신 가능한지 확인"""
         return self.refresh_token is not None
+    
+    def is_encrypted(self) -> bool:
+        """토큰이 암호화되어 있는지 확인"""
+        # 암호화된 토큰은 base64 인코딩된 형태로 시작
+        return self.access_token.startswith('Z0FBQUFBQm')
+    
+    def is_jwt_token(self, decrypted_token: Optional[str] = None) -> bool:
+        """JWT 토큰인지 확인"""
+        token_to_check = decrypted_token or self.access_token
+        return token_to_check.startswith('eyJ')
+    
+    def extract_jwt_expiry(self, decrypted_token: str) -> Optional[datetime]:
+        """JWT 토큰에서 실제 만료 시간 추출 (서울 시간으로 변환)"""
+        try:
+            import json
+            import base64
+            
+            # JWT는 header.payload.signature 형태
+            parts = decrypted_token.split('.')
+            if len(parts) != 3:
+                return None
+            
+            # payload 부분 디코딩 (base64url)
+            payload = parts[1]
+            # base64url 패딩 추가
+            payload += '=' * (4 - len(payload) % 4)
+            decoded_bytes = base64.urlsafe_b64decode(payload)
+            payload_data = json.loads(decoded_bytes.decode('utf-8'))
+            
+            if 'exp' in payload_data:
+                # UTC 시간을 서울 시간으로 변환
+                utc_time = datetime.fromtimestamp(payload_data['exp'], tz=timezone.utc)
+                kst_time = utc_time.astimezone(KST).replace(tzinfo=None)
+                return kst_time
+            
+            return None
+        except Exception:
+            return None
+    
+    def is_expired_by_jwt(self, decrypted_token: str) -> bool:
+        """JWT 토큰의 실제 만료 시간으로 만료 여부 확인"""
+        jwt_expiry = self.extract_jwt_expiry(decrypted_token)
+        if jwt_expiry:
+            return now_kst() >= jwt_expiry
+        # JWT 파싱 실패 시 기존 만료 시간 사용
+        return self.is_expired()
 
 
 class Mail(BaseModel):

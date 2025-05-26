@@ -30,7 +30,8 @@ from .db.repositories import (
 from .db.database import DatabaseAdapter, initialize_database
 from .external.graph_api_client import GraphApiClientAdapter
 from .external.encryption_service import EncryptionServiceAdapter
-from .external.cache_service import CacheServiceAdapter, InMemoryCacheServiceAdapter
+from .external.cache_service import InMemoryCacheServiceAdapter
+from .db.cache_repository import DatabaseCacheServiceAdapter
 from .logger import LoggerAdapter
 from config.adapters import get_config
 
@@ -64,24 +65,19 @@ class AdapterFactory:
             )
         return self._encryption_service
     
-    def create_cache_service(self) -> CacheServicePort:
+    def create_cache_service(self, session: Optional[AsyncSession] = None) -> CacheServicePort:
         """캐시 서비스 어댑터를 생성합니다."""
-        if self._cache_service is None:
-            logger = self.create_logger()
-            
-            # Redis URL이 설정되어 있으면 Redis 사용, 아니면 메모리 캐시 사용
-            redis_url = self.config.get_redis_url()
-            if redis_url and not redis_url.startswith("redis://localhost"):
-                self._cache_service = CacheServiceAdapter(
-                    redis_url=redis_url,
-                    logger=logger,
-                )
-            else:
-                # 개발/테스트 환경에서는 메모리 캐시 사용
-                logger.info("Redis 설정이 없어 메모리 캐시를 사용합니다")
+        logger = self.create_logger()
+        if session:
+            # 데이터베이스 기반 캐시 사용 (세션별로 새 인스턴스 생성)
+            logger.info("데이터베이스 기반 캐시를 사용합니다")
+            return DatabaseCacheServiceAdapter(session=session, logger=logger)
+        else:
+            # 메모리 기반 캐시 사용 (싱글톤)
+            if self._cache_service is None:
+                logger.info("메모리 기반 캐시를 사용합니다")
                 self._cache_service = InMemoryCacheServiceAdapter(logger=logger)
-        
-        return self._cache_service
+            return self._cache_service
     
     def create_graph_api_client(self) -> GraphApiClientPort:
         """Graph API 클라이언트 어댑터를 생성합니다."""
@@ -121,7 +117,7 @@ class AdapterFactory:
         token_repository = self.create_token_repository(session)
         graph_api_client = self.create_graph_api_client()
         encryption_service = self.create_encryption_service()
-        cache_service = self.create_cache_service()
+        cache_service = self.create_cache_service(session)  # 데이터베이스 기반 캐시 사용
         logger = self.create_logger()
         
         return AuthenticationUseCase(
