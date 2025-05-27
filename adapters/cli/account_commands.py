@@ -6,6 +6,7 @@ AccountManagementUseCase를 CLI 명령으로 노출하는 어댑터입니다.
 
 import asyncio
 import json
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 from uuid import UUID
 
@@ -19,6 +20,21 @@ from adapters.db.database import initialize_database
 from adapters.db.repositories import AccountRepositoryAdapter, AuthConfigRepositoryAdapter
 from adapters.logger import create_logger
 from config.adapters import get_config
+
+# 서울 시간대 정의
+KST = timezone(timedelta(hours=9))
+
+def utc_to_kst(utc_dt):
+    """UTC 시간을 KST로 변환합니다."""
+    if utc_dt is None:
+        return None
+    if isinstance(utc_dt, str):
+        return utc_dt
+    # UTC 시간으로 가정하고 KST로 변환
+    if utc_dt.tzinfo is None:
+        utc_dt = utc_dt.replace(tzinfo=timezone.utc)
+    kst_dt = utc_dt.astimezone(KST)
+    return kst_dt.strftime("%Y-%m-%d %H:%M")
 
 # CLI 앱 생성
 app = typer.Typer(name="account", help="계정 관리 명령어")
@@ -172,7 +188,7 @@ def list_accounts(
                         account.display_name or "-",
                         account.auth_type.value,
                         account.status.value,
-                        account.created_at.strftime("%Y-%m-%d %H:%M") if account.created_at else "-",
+                        utc_to_kst(account.created_at) or "-",
                     )
                 
                 console.print(table)
@@ -237,9 +253,9 @@ def get_account(
                 console.print(f"표시 이름: {account.display_name or '-'}")
                 console.print(f"인증 타입: {account.auth_type.value}")
                 console.print(f"상태: {account.status.value}")
-                console.print(f"마지막 동기화: {account.last_sync_at or '-'}")
-                console.print(f"생성일: {account.created_at}")
-                console.print(f"수정일: {account.updated_at}")
+                console.print(f"마지막 동기화: {utc_to_kst(account.last_sync_at) or '-'}")
+                console.print(f"생성일: {utc_to_kst(account.created_at) or '-'}")
+                console.print(f"수정일: {utc_to_kst(account.updated_at) or '-'}")
             
             await db_adapter.close()
             
