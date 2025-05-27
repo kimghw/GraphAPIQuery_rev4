@@ -76,6 +76,9 @@ def register_account(
                     if not final_client_secret or not final_redirect_uri:
                         console.print("[red]오류: Authorization Code Flow에는 client_secret과 redirect_uri가 필요합니다.[/red]")
                         raise typer.Exit(1)
+                elif auth_type_enum == AuthType.DEVICE_CODE:
+                    # Device Code Flow에서도 client_secret 전달 (선택적)
+                    final_client_secret = client_secret
                 
                 # 계정 등록
                 account = await usecase.register_account(

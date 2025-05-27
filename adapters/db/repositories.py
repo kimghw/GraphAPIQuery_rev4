@@ -283,6 +283,8 @@ class AuthConfigRepositoryAdapter(AuthConfigRepositoryPort):
     
     async def save_device_code_config(self, config: DeviceCodeConfig) -> DeviceCodeConfig:
         """Device Code 설정을 저장합니다."""
+        print(f"[DB] Device Code 설정 저장 시작 - account_id: {config.account_id}, client_secret: {'있음' if config.client_secret else '없음'}")
+        
         # 기존 설정이 있는지 확인
         stmt = select(DeviceCodeConfigModel).where(
             DeviceCodeConfigModel.account_id == str(config.account_id)
@@ -292,6 +294,7 @@ class AuthConfigRepositoryAdapter(AuthConfigRepositoryPort):
         
         if existing_model:
             # 업데이트
+            print(f"[DB] 기존 Device Code 설정 업데이트 - 기존 client_secret: {'있음' if existing_model.client_secret else '없음'}")
             existing_model.client_id = config.client_id
             existing_model.client_secret = config.client_secret
             existing_model.tenant_id = config.tenant_id
@@ -299,6 +302,7 @@ class AuthConfigRepositoryAdapter(AuthConfigRepositoryPort):
             model = existing_model
         else:
             # 새로 생성
+            print(f"[DB] 새 Device Code 설정 생성")
             model = DeviceCodeConfigModel(
                 account_id=str(config.account_id),
                 client_id=config.client_id,
@@ -309,6 +313,8 @@ class AuthConfigRepositoryAdapter(AuthConfigRepositoryPort):
         
         await self.session.commit()
         await self.session.refresh(model)
+        
+        print(f"[DB] Device Code 설정 저장 완료 - DB에 저장된 client_secret: {'있음' if model.client_secret else '없음'}")
         
         return self._device_code_model_to_entity(model)
     
@@ -327,6 +333,8 @@ class AuthConfigRepositoryAdapter(AuthConfigRepositoryPort):
     
     async def get_device_code_config(self, account_id: UUID) -> Optional[DeviceCodeConfig]:
         """Device Code 설정을 조회합니다."""
+        print(f"[DB] Device Code 설정 조회 시작 - account_id: {account_id}")
+        
         stmt = select(DeviceCodeConfigModel).where(
             DeviceCodeConfigModel.account_id == str(account_id)
         )
@@ -334,7 +342,10 @@ class AuthConfigRepositoryAdapter(AuthConfigRepositoryPort):
         model = result.scalar_one_or_none()
         
         if model is None:
+            print(f"[DB] Device Code 설정을 찾을 수 없음 - account_id: {account_id}")
             return None
+        
+        print(f"[DB] Device Code 설정 조회 완료 - client_secret: {'있음' if model.client_secret else '없음'}")
         
         return self._device_code_model_to_entity(model)
     
@@ -382,12 +393,17 @@ class AuthConfigRepositoryAdapter(AuthConfigRepositoryPort):
     
     def _device_code_model_to_entity(self, model: DeviceCodeConfigModel) -> DeviceCodeConfig:
         """Device Code 모델을 엔티티로 변환합니다."""
-        return DeviceCodeConfig(
+        print(f"[DB] Device Code 모델→엔티티 변환 - client_secret: {'있음' if model.client_secret else '없음'}")
+        
+        entity = DeviceCodeConfig(
             account_id=UUID(model.account_id),
             client_id=model.client_id,
             client_secret=model.client_secret,
             tenant_id=model.tenant_id,
         )
+        
+        print(f"[DB] Device Code 엔티티 생성 완료 - client_secret: {'있음' if entity.client_secret else '없음'}")
+        return entity
 
 
 class TokenRepositoryAdapter(TokenRepositoryPort):

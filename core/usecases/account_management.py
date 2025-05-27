@@ -100,11 +100,14 @@ class AccountManagementUseCase:
             )
             await self.auth_config_repository.create_auth_code_config(auth_config)
         elif auth_type == AuthType.DEVICE_CODE:
+            self.logger.info(f"Device Code 설정 생성 - client_secret 전달 여부: {client_secret is not None}")
             auth_config = DeviceCodeConfig(
                 account_id=created_account.id,
                 client_id=client_id,
                 tenant_id=tenant_id,
+                client_secret=client_secret,  # client_secret 전달 추가
             )
+            self.logger.info(f"Device Code 설정 생성 완료 - client_secret: {'설정됨' if auth_config.client_secret else '미설정'}")
             await self.auth_config_repository.create_device_code_config(auth_config)
         
         self.logger.info(f"계정 등록 완료: {created_account.id}, {email}")

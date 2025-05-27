@@ -198,6 +198,8 @@ class AuthenticationUseCase:
         if not auth_config:
             raise ValueError(f"인증 설정을 찾을 수 없습니다: {account_id}")
         
+        self.logger.info(f"Device Code 설정 조회 완료 - client_secret: {'설정됨' if auth_config.client_secret else '미설정'}")
+        
         # 디바이스 코드 요청
         device_code_response = await self.graph_api_client.get_device_code(
             client_id=auth_config.client_id,
@@ -256,16 +258,21 @@ class AuthenticationUseCase:
         if not account or not auth_config:
             raise ValueError("계정 또는 인증 설정을 찾을 수 없습니다")
         
+        self.logger.info(f"Device Code 폴링 설정 확인 - client_secret: {'설정됨' if auth_config.client_secret else '미설정'}")
+        
         # 폴링 시작
         for attempt in range(max_attempts):
             try:
                 self.logger.debug(f"Device Code 폴링 시도 {attempt + 1}/{max_attempts}")
                 
+                client_secret_value = getattr(auth_config, 'client_secret', None)
+                self.logger.debug(f"폴링 시 client_secret 전달: {'있음' if client_secret_value else '없음'}")
+                
                 token_response = await self.graph_api_client.poll_device_code(
                     client_id=auth_config.client_id,
                     tenant_id=auth_config.tenant_id,
                     device_code=device_code,
-                    client_secret=getattr(auth_config, 'client_secret', None),
+                    client_secret=client_secret_value,
                 )
                 
                 # 성공 시 토큰 저장

@@ -1,6 +1,120 @@
 # 태스크 컨텍스트 및 진행사항
 
-## 현재 태스크: OAuth 2.0 인증 시스템 완료 및 시간 처리 개선
+## 현재 태스크: Device Code Flow client_secret 전달 문제 추적 및 로깅 시스템 구현
+
+### 태스크 개요
+- **목표**: Device Code Flow에서 client_secret이 제대로 전달되지 않는 문제 추적
+- **범위**: 계정 생성부터 인증 플로우까지 전체 흐름에 로깅 추가
+- **상태**: 🔄 진행 중
+
+### 현재 진행 중인 작업 (2025-05-27)
+
+#### 1. 문제 분석 및 함수 호출 흐름 파악 ✅
+**Instructions 기본 원칙에 따른 분석:**
+- 작업 지시사항 및 작업 순서를 엄격히 준수
+- 기존 프로젝트의 엔티티, 포트인터페이스, 유즈케이스를 검토 후 기존 코드 재사용
+- 함수 호출 흐름도를 파악하고 최적화된 구조로 구성
+
+**발견된 문제:**
+1. **계정 생성 시**: `AccountManagementUseCase.register_account()` → `DeviceCodeConfig` 생성 시 `client_secret` 파라미터가 전달되지 않음
+2. **인증 플로우 시**: `AuthenticationUseCase.poll_device_code_flow()` → `getattr(auth_config, 'client_secret', None)`로 읽어오려 하지만 None이 됨
+
+**함수 호출 흐름:**
+```
+사용자 요청 → CLI → AccountManagementUseCase.register_account()
+                 ↓
+              DeviceCodeConfig(client_secret=None) ← 문제 지점
+                 ↓
+              AuthConfigRepositoryAdapter.save_device_code_config()
+                 ↓
+              데이터베이스 저장
+                 ↓
+              인증 시 조회 → AuthenticationUseCase.poll_device_code_flow()
+                 ↓
+              getattr(auth_config, 'client_secret', None) → None 반환
+```
+
+#### 2. 로깅 시스템 구현 ✅
+**추가된 로깅 위치:**
+
+1. **계정 관리 유즈케이스** (`core/usecases/account_management.py`):
+   ```python
+   # Device Code 설정 생성 시 로깅 추가
+   self.logger.info(f"Device Code 설정 생성 - client_secret 전달 여부: {client_secret is not None}")
+   auth_config = DeviceCodeConfig(
+       account_id=created_account.id,
+       client_id=client_id,
+       tenant_id=tenant_id,
+       client_secret=client_secret,  # client_secret 전달 추가
+   )
+   self.logger.info(f"Device Code 설정 생성 완료 - client_secret: {'설정됨' if auth_config.client_secret else '미설정'}")
+   ```
+
+2. **인증 유즈케이스** (`core/usecases/authentication.py`):
+   ```python
+   # Device Code Flow 시작 시
+   self.logger.info(f"Device Code 설정 조회 완료 - client_secret: {'설정됨' if auth_config.client_secret else '미설정'}")
+   
+   # Device Code Flow 폴링 시
+   self.logger.info(f"Device Code 폴링 설정 확인 - client_secret: {'설정됨' if auth_config.client_secret else '미설정'}")
+   client_secret_value = getattr(auth_config, 'client_secret', None)
+   self.logger.debug(f"폴링 시 client_secret 전달: {'있음' if client_secret_value else '없음'}")
+   ```
+
+3. **데이터베이스 리포지토리** (`adapters/db/repositories.py`):
+   ```python
+   # Device Code 설정 저장 시
+   print(f"[DB] Device Code 설정 저장 시작 - account_id: {config.account_id}, client_secret: {'있음' if config.client_secret else '없음'}")
+   print(f"[DB] Device Code 설정 저장 완료 - DB에 저장된 client_secret: {'있음' if model.client_secret else '없음'}")
+   
+   # Device Code 설정 조회 시
+   print(f"[DB] Device Code 설정 조회 시작 - account_id: {account_id}")
+   print(f"[DB] Device Code 설정 조회 완료 - client_secret: {'있음' if model.client_secret else '없음'}")
+   
+   # 모델→엔티티 변환 시
+   print(f"[DB] Device Code 모델→엔티티 변환 - client_secret: {'있음' if model.client_secret else '없음'}")
+   print(f"[DB] Device Code 엔티티 생성 완료 - client_secret: {'있음' if entity.client_secret else '없음'}")
+   ```
+
+#### 3. 핵심 수정 사항 ✅
+**문제 해결:**
+- `AccountManagementUseCase.register_account()` 메서드에서 `DeviceCodeConfig` 생성 시 `client_secret=client_secret` 파라미터 추가
+- 이전에는 `client_secret` 파라미터가 전달되지 않아 항상 None으로 설정됨
+
+**로깅 전략:**
+- 유즈케이스 레벨: `self.logger.info()` 사용
+- 데이터베이스 레벨: `print()` 사용 (즉시 출력 보장)
+- 각 단계별로 `client_secret` 존재 여부 추적
+
+### 추적 가능한 로그 흐름
+
+이제 다음과 같은 로그를 통해 `client_secret` 전달 과정을 완전히 추적할 수 있습니다:
+
+1. **계정 생성 시**:
+   ```
+   [로그] Device Code 설정 생성 - client_secret 전달 여부: True/False
+   [로그] Device Code 설정 생성 완료 - client_secret: 설정됨/미설정
+   [DB] Device Code 설정 저장 시작 - client_secret: 있음/없음
+   [DB] Device Code 설정 저장 완료 - DB에 저장된 client_secret: 있음/없음
+   ```
+
+2. **인증 플로우 시**:
+   ```
+   [DB] Device Code 설정 조회 시작 - account_id: xxx
+   [DB] Device Code 설정 조회 완료 - client_secret: 있음/없음
+   [DB] Device Code 모델→엔티티 변환 - client_secret: 있음/없음
+   [DB] Device Code 엔티티 생성 완료 - client_secret: 있음/없음
+   [로그] Device Code 설정 조회 완료 - client_secret: 설정됨/미설정
+   [로그] Device Code 폴링 설정 확인 - client_secret: 설정됨/미설정
+   [로그] 폴링 시 client_secret 전달: 있음/없음
+   ```
+
+### 다음 단계
+1. **테스트 실행**: 새로운 Device Code 계정 생성 및 인증 테스트
+2. **로그 분석**: 각 단계에서 `client_secret` 전달 상태 확인
+3. **문제 해결 확인**: 수정된 코드로 정상 동작 여부 검증
+
+## 이전 태스크: OAuth 2.0 인증 시스템 완료 및 시간 처리 개선
 
 ### 태스크 개요
 - **목표**: OAuth 2.0 기반 Microsoft Graph API 인증 시스템 완전 구현
